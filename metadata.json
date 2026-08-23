@@ -1,0 +1,6 @@
+{
+  "name": "Transcribe",
+  "description": "Offline Speech-to-Text & Audio Transcription App with background recording, multilingual model management, and offline PDF/MD/TXT export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
