@@ -1,0 +1,96 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "Build type"
+        required: true
+        default: "debug"
+        type: choice
+        options:
+          - debug
+          - release
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      # 1. Get the code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Set up Java (JDK 17 works for modern Android Gradle Plugin)
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # 3. Set up Android SDK automatically
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      # 4. Locate the Gradle project root (handles root-level or /android subfolder layouts)
+      - name: Locate Gradle project
+        id: locate
+        run: |
+          if [ -f "./gradlew" ]; then
+            echo "dir=." >> "$GITHUB_OUTPUT"
+          elif [ -f "./android/gradlew" ]; then
+            echo "dir=android" >> "$GITHUB_OUTPUT"
+          else
+            GRADLEW_PATH=$(find . -maxdepth 3 -name "gradlew" | head -n 1)
+            if [ -n "$GRADLEW_PATH" ]; then
+              echo "dir=$(dirname "$GRADLEW_PATH")" >> "$GITHUB_OUTPUT"
+            else
+              echo "dir=." >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      # 5. If no gradlew wrapper exists at all, generate one (pinned version for reproducibility)
+      - name: Ensure Gradle wrapper exists
+        working-directory: ${{ steps.locate.outputs.dir }}
+        run: |
+          if [ ! -f "./gradlew" ]; then
+            echo "No gradlew found — generating wrapper..."
+            gradle wrapper --gradle-version 8.7
+          fi
+          chmod +x ./gradlew
+
+      # 6. Cache Gradle so future builds are much faster
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # 7. Build the APK (debug by default, release if selected)
+      - name: Build APK
+        working-directory: ${{ steps.locate.outputs.dir }}
+        run: |
+          BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
+          if [ "$BUILD_TYPE" = "release" ]; then
+            if [ -z "$ANDROID_KEYSTORE_BASE64" ] && [ ! -f "keystore.jks" ]; then
+              echo "::warning::No release keystore configured — release APK may be unsigned. Add signing secrets if you need a distributable build."
+            fi
+            ./gradlew assembleRelease --stacktrace
+          else
+            ./gradlew assembleDebug --stacktrace
+          fi
+
+      # 8. Upload every APK produced, wherever it ended up
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-apk
+          path: "**/build/outputs/apk/**/*.apk"
+          if-no-files-found: error
+          retention-days: 30
